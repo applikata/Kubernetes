@@ -1,0 +1,227 @@
+Запуск Тестового poda с собственного реджестри
+
+Создаем серкет для нашего реджестри
+
+kubectl create secret docker-registry regcred \
+--docker-server=registry.macrasafack.ru \
+--docker-username=arsenmachina \
+--docker-password='A13By1369!#' \
+--docker-email=
+
+Проверяем что получилось
+kubectl get secret regcred --output="jsonpath={.data.\.dockerconfigjson}" | base64 --decode
+
+Запускаем.
+kubectl run demo --image=registry.macrasafack.ru/arsenmachina/kubernetes/hello --overrides='{ "spec": { "imagePullSecrets": [{"name": "regcred"}] } }' --port=9999 --labels app=demo
+
+И пробрасываем порты
+kubectl port-forward deploy/demo 9999:8888 по умолчанию пробрасывается на 127.0.0.1
+kubectl port-forward demo 9999:8888 --address='0.0.0.0' - будет принимать входящие на пакеты
+
+
+Получить подрубную инфрмацию о развертиывании
+kubectl describe deployments/pod_name -n kube-system
+
+Уничтожить развертывание
+kubectl delete all --selector app=demo
+
+
+Посмотреть поддерживаемые api 
+kubectl api-resources | grep deployment
+
+
+Быстрый запуск сервера(единой точки входа для приложения)
+и деплойент(обхект управляющий подами)
+и проброс портов
+kubectl apply -f deployment.yml
+kubectl apply -f services.yml
+kubectl port-forward service/name {listen_port}
+kubectl port-forward service/demo 9999 --address='0.0.0.0' для всех входящих
+
+Удаление с помощью папки где лежат манифесты 
+kubectl delete -f <dirname>
+
+
+
+Запросы не ресурсы 
+Если в кластере нет узда где будет хватать ресурсов описанных в манифесте 
+то под будет в состоянии pending
+
+spec:
+ containers:
+ - name: demo
+   image: cloudnatived/demo:hello
+   ports:
+   - containerPort: 8888
+   resources:
+    requests:
+     memory: "10Mi"
+     cpu: "100m"
+
+
+Лимиты на ресуры - определяет максимальное количество этого ресурса которое 
+pod-оболочке позволенно использовать. Если pod-оболочка попытается испольщвоать более 
+то производительность будет снижена. Pod оболочка которая пытается использовать 
+больше память чем в лимите будет принудительно остановлена и снова окажется запланированна.
+
+  spec:
+    containers:
+    - name: demo
+      image: cloudnatived/demo:hello
+      ports:
+      - containerPort: 8888
+      resources:
+        limits:
+        memory: "20Mi"
+        cpu: "250m"
+
+
+
+проверка работспособности( Health Check )
+
+Любой ответ отличный от 2xx и 3xx считается что хост не дсотупен.
+  initialDelaySeconds:  позволяет сделать задержку перед проверкой после запуска контейнера для избежания 
+  убийственного цикла (loop of the death)
+  periodSeconds: 3 - частота проверки 
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8888
+  initialDelaySeconds: 3
+  periodSeconds: 3
+
+Так же можно выполнять проверку произвольными командами используя проверку exec
+Проверка считается успешной если команда выполнилась успешно со статусом 0 
+readinessProbe:
+  exec:
+    command:
+    - cat
+    - /tmp/healthy
+
+
+Прровекра по сокеты подключение к определенному порту
+livenessProbe:
+  tcpSocket:
+    port: 8888
+
+Обычно при запуске pod оболочки кубер начинает отправлять ей трафик 
+как только контейнер переходит в рабочее состояние, но если у контейнера 
+есть проверка готовности он сначала дождется ее успешного прохождения 
+и только потом начнет отправлять контейнеру трафик 
+Контенйер который еще не готов имеет состояние Running но в поле READY 
+будет видно что один или несколько контенцеров в pod-оболчке не готовы к работе 
+Проверкки готовности в отличии от проверки работоспособности принимают в положительное значение 
+только код ответа 200 
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8888
+  initialDelaySeconds: 3
+  periodSeconds: 3
+
+
+
+  Простанства имен.
+
+Получить pod-оболочки в опредленном простансве имен
+kubectl get po --namespace kube-system
+
+Создавать простанства имен можно с помощью ресурса Namespace
+
+apiVersion: v1
+kind: Namespace 
+metadta:
+  name: demo
+
+или так 
+kubectl create namespace demo
+
+Доменные имена сервисов всегда имеют следующую структуру:
+demo.prod
+demo - service 
+prod - namespace
+
+
+Квоты на ресурсы 
+
+Можно ограничить процессорного времени и рпмятьти не только для отельных контейнеров 
+но и для проставнсва имен, для этого создается ресурс ResourceQuota и применяется к опредленному пространсву имен 
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: demo-resourcequota
+spec:
+  hard:
+    pods: "2"
+
+В данном примерер после создания пространсва имен 
+
+ kubectl apply -f namespace.yaml
+
+ можно включить квоты для этого пространсва имен
+ kubectl apply -f resourcequota.yaml --namespace demo 
+
+
+ Можно задать лимиты для всех контейнеров в пространсве имен по умолчанию 
+ с помощью манифеста LimitRange
+
+ apiVersion: v1
+kind: LimitRange
+metadata:
+  name: demo-limitrange
+spec:
+  limits:
+  - default:
+      cpu: "500m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "200m"
+      memory: "128Mi"
+    type: Container
+
+    Параметры квоты и русурсрейнж начинают дейстоваовать только после того как их применили к прстрансву имен!
+
+    По умолчанию в Kubernetes действует лимит 110 pod-оболочек на узел.
+
+
+    Мониторинг 
+
+    kubectl apply -f https://raw.githubusercontent.com/pythianarora/total-practice/master/sample-kubernetes-code/metrics-server.yaml
+    kubectl top nodes
+
+    Можно каждому ресурсу присвоить информацию о владельце.
+    Для этого используются аннотации.
+    Пример с рзавертыванием с аннотацией.
+
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: my-brilliant-app
+  annotations:
+    example.com/owner: "Customer Apps Team"
+
+
+Spot сервера - в терминологии AWS перываемые сервера 
+в Google cloud - это просто прерываемые сервера 
+данные сервера дают на время пока есть свободные ресурсы и их в любой момент могут забрать 
+
+в кубернетес можно использовать концепцию принадлежности узлов
+(node affinites) - чтобы pod оболочки отказ которых недопустим не размещались на перываемых узлах.
+
+Есть жесткая принаджежность - чтобы не запускалась на spot прерываемых серверах
+и мягка принаджежность возможно запускать на spot прерываемых серверах 
+
+Баллансировка нагрузки - 
+
+ВАЖНО !!!!!!!!!!!!!!!!!!!!!!
+Если у нас имеется два узла и pod-оболчки А и Б с replicaset 2 , то планировщик разместит по 1 pod - оболоске на каждой ноде 
+В случае выхода из строя одной ноды , на рабочей будет 4 пода 
+И при добавлении новой ноды в кластер на первой ноде по прежнему будет 4 пода, а на новой ноде 0 подов 
+ПЛАНИРОВЩИК НИКОГДА НЕ ПЕРЕМЕЩАЕТ РАБОЧИЮ POD-ОБОЛЧКИ С ОДНОГО УЗЛА НА ДРУГОЙ 
+
+Для исправления ситуации можно исспользовать desheduller который будет перебалансировать и искать поды где реплики на одном и более узлах 
+
+PodDisruptionBudget позволяет ограничить количество pod-оболочек, которые
+можно останавливать одновременно в процессе выселения. Это позволяет под-
+держивать высокую доступность вашего приложения.
