@@ -270,4 +270,32 @@ kubectl attach pod_name
 
 Для отслеживания того что происходит за куллисами (deployment, service) и их запуск можно использовать kubespy 
 kubespy trace deploy demo
-169 стр
+
+Проброс порта конкретной под оболчки 
+kubectl port-forward demo-54f4458547-vm88z 9999:8888 
+
+Войти в контейнер, если в поде несколько оболочек то по дефолту команда выополнится в пером из них 
+kubectl exec -it alpine-7fd44fc4bf-7gl4n /bin/sh
+
+Запуск команды в конкретном контейнере под оболочки 
+kubectl exec -it -c container2 POD_NAME /bin/sh
+
+
+Быстрый запуск pod оболочки для резолвинга доменного имени другой под оболочки
+kubectl run nslookup --restart=Never --rm -it  --image=busybox:1.28 --command --  nslookup demo
+
+или для теста ответа api
+kubectl run name --restart=Never --rm -it  --image=busybox:1.28 --command --  wget -qO- http://demo:8888
+
+В мультистейдж сборке можно копировать артефакты не только из предыдущих сборок но и из образов доступных 
+в других репозиториях 
+
+FROM golang:1.11-alpine AS build
+WORKDIR /src/
+COPY main.go go.* /src/
+RUN CGO_ENABLED=0 go build -o /bin/demo
+FROM scratch
+COPY --from=build /bin/demo /bin/demo
+COPY --from=busybox:1.28 /bin/busybox /bin/busybox
+ENTRYPOINT ["/bin/demo"]
+
